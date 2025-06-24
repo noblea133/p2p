@@ -1,136 +1,150 @@
 
 // ==UserScript==
-// @name         QuestionHub Manual Decision Restorer
-// @namespace    amazon_ir_editor_manual_restore
-// @version      1.1
-// @description  Tracks and restores label decisions per question. Only restores when button is clicked.
+// @name         QuestionHub Row Click Label Tracker & Restore
+// @namespace    amazon_ir_editor_row_label_restore
+// @version      2.0
+// @description  Records label + row click decisions per question. Manual restore via button.
 // @match        https://ir-editor.amazon.com/questionHub/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @run-at       document-idle
 // ==/UserScript==
 
-(function() {
-    'use strict';
+(function () {
+  'use strict';
 
-    const STORAGE_KEY = 'qh_decision_map';
-    const RESTORE_BTN_ID = 'qh-restore-decisions-btn';
-    const QUESTION_SEL = 'h5';
-    const LABEL_SEL = '.label-picker-label';
+  const STORAGE_KEY = 'qh_row_decision_map';
+  const RESTORE_BTN_ID = 'qh-restore-decisions-btn';
+  const QUESTION_SELECTOR = 'h5';
+  const LABEL_SELECTOR = 'td.cluster-question-item-data-label';
+  const ROW_SELECTOR = 'tr';
 
-    // Helper: Load entire map
-    function loadMap() {
-        return GM_getValue(STORAGE_KEY, {});
+  let currentLabel = null;
+
+  function getCurrentQuestion() {
+    const h5 = document.querySelector(QUESTION_SELECTOR);
+    return h5 ? h5.textContent.trim() : null;
+  }
+
+  function loadMap() {
+    return GM_getValue(STORAGE_KEY, {});
+  }
+
+  function saveMap(map) {
+    GM_setValue(STORAGE_KEY, map);
+  }
+
+  function recordDecision(asinId, label) {
+    const q = getCurrentQuestion();
+    if (!q || !asinId) return;
+
+    const map = loadMap();
+    map[q] = map[q] || [];
+
+    const existing = map[q].find(e => e.asinId === asinId);
+    if (existing) {
+      existing.label = label;
+    } else {
+      map[q].push({ asinId, label });
     }
 
-    // Helper: Save entire map
-    function saveMap(map) {
-        GM_setValue(STORAGE_KEY, map);
-    }
+    saveMap(map);
+    console.log(`[Saved] ${asinId} → ${label} under: ${q}`);
+  }
 
-    // Get current question's identifier (from <h5>)
-    function getCurrentQuestion() {
-        const h5 = document.querySelector(QUESTION_SEL);
-        return h5 ? h5.textContent.trim() : null;
-    }
+  function restoreForCurrentQuestion() {
+    const q = getCurrentQuestion();
+    if (!q) return alert('⚠️ No question found.');
 
-    // Record a label click for an ASIN inside a question
-    function recordDecision(asinId, label) {
-        const q = getCurrentQuestion();
-        if (!q || !asinId || !label) return;
+    const map = loadMap();
+    const decisions = map[q] || [];
+    let restored = 0;
 
-        const map = loadMap();
-        map[q] = map[q] || [];
+    decisions.forEach(({ asinId, label }) => {
+      // Simulate label click
+      const labelCell = [...document.querySelectorAll(LABEL_SELECTOR)]
+        .find(td => td.textContent.trim() === label);
+      if (!labelCell) return;
 
-        // Update or insert decision for that ASIN
-        const existing = map[q].find(entry => entry.asinId === asinId);
-        if (existing) {
-            existing.label = label;
-        } else {
-            map[q].push({ asinId, label });
-        }
+      labelCell.click(); // Set label
+      currentLabel = label;
 
-        saveMap(map);
-    }
-
-    // Restore decision map for current question only
-    function restoreForCurrentQuestion() {
-        const q = getCurrentQuestion();
-        if (!q) return alert("No question <h5> found.");
-
-        const map = loadMap();
-        const decisions = map[q] || [];
-        let restored = 0;
-
-        decisions.forEach(({ asinId, label }) => {
-            const item = Array.from(document.querySelectorAll('.label-map-grid-item'))
-                .find(el => el.dataset.asin === asinId || el.id === asinId);
-            if (!item) return;
-
-            const labelBtn = Array.from(item.querySelectorAll(LABEL_SEL))
-                .find(btn => btn.textContent.trim() === label);
-            if (labelBtn) {
-                labelBtn.click();
-                labelBtn.style.outline = '2px solid limegreen';
-                restored++;
-            }
-        });
-
-        alert(`✅ Restored ${restored} decision(s) for this question.`);
-    }
-
-    // Inject floating restore button
-    function injectRestoreButton() {
-        if (document.getElementById(RESTORE_BTN_ID)) return;
-
-        const btn = document.createElement('button');
-        btn.id = RESTORE_BTN_ID;
-        btn.textContent = 'Restore Decisions';
-        Object.assign(btn.style, {
-            position: 'fixed',
-            bottom: '20px',
-            right: '20px',
-            padding: '10px 16px',
-            background: '#0073bb',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '5px',
-            fontSize: '14px',
-            zIndex: 9999,
-            cursor: 'pointer',
-            boxShadow: '0 2px 6px rgba(0,0,0,0.3)'
-        });
-
-        btn.addEventListener('click', restoreForCurrentQuestion);
-        document.body.appendChild(btn);
-    }
-
-    // Bind click listeners to label buttons
-    function bindLabelClickTracking() {
-        const all = document.querySelectorAll(LABEL_SEL);
-        all.forEach(btn => {
-            if (btn.dataset.qhTracked) return; // prevent double-binding
-            btn.dataset.qhTracked = 'true';
-
-            btn.addEventListener('click', () => {
-                const parent = btn.closest('.label-map-grid-item');
-                const asinId = parent?.dataset.asin || parent?.id;
-                const label = btn.textContent.trim();
-                recordDecision(asinId, label);
-            });
-        });
-    }
-
-    // Observe DOM and maintain button + bindings
-    const observer = new MutationObserver(() => {
-        injectRestoreButton();
-        bindLabelClickTracking();
+      // Find ASIN row to click
+      const row = [...document.querySelectorAll('tr')].find(tr =>
+        tr.innerHTML.includes(asinId));
+      if (row) {
+        row.click();
+        row.style.outline = '2px solid limegreen';
+        restored++;
+      }
     });
 
-    observer.observe(document.body, { childList: true, subtree: true });
+    alert(`✅ Restored ${restored} decision(s) for: "${q}"`);
+    console.log(`[Restored] ${restored} rows for "${q}"`);
+  }
 
-    // Initial inject
+  function injectRestoreButton() {
+    if (document.getElementById(RESTORE_BTN_ID)) return;
+
+    const btn = document.createElement('button');
+    btn.id = RESTORE_BTN_ID;
+    btn.textContent = 'Restore Decisions';
+    Object.assign(btn.style, {
+      position: 'fixed',
+      bottom: '20px',
+      right: '20px',
+      zIndex: 9999,
+      backgroundColor: '#0073bb',
+      color: '#fff',
+      padding: '10px 15px',
+      fontSize: '14px',
+      border: 'none',
+      borderRadius: '5px',
+      cursor: 'pointer',
+      boxShadow: '0 2px 5px rgba(0,0,0,0.2)'
+    });
+
+    btn.onclick = restoreForCurrentQuestion;
+    document.body.appendChild(btn);
+  }
+
+  function bindClicks() {
+    // Label clicks
+    document.querySelectorAll(LABEL_SELECTOR).forEach(label => {
+      if (label.dataset.boundLabel) return;
+      label.dataset.boundLabel = 'true';
+
+      label.addEventListener('click', () => {
+        currentLabel = label.textContent.trim();
+        console.log('[Label Set]', currentLabel);
+      });
+    });
+
+    // Row clicks (only rows with ASINs inside)
+    document.querySelectorAll(ROW_SELECTOR).forEach(row => {
+      if (row.dataset.boundRow) return;
+      row.dataset.boundRow = 'true';
+
+      row.addEventListener('click', () => {
+        if (!currentLabel) return;
+        const asinMatch = row.innerHTML.match(/B0[A-Z0-9]{8}/);
+        const asinId = asinMatch ? asinMatch[0] : null;
+        if (asinId) {
+          recordDecision(asinId, currentLabel);
+        }
+      });
+    });
+  }
+
+  const observer = new MutationObserver(() => {
     injectRestoreButton();
-    bindLabelClickTracking();
+    bindClicks();
+  });
 
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  window.addEventListener('load', () => {
+    injectRestoreButton();
+    bindClicks();
+  });
 })();
