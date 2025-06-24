@@ -1,9 +1,9 @@
 
 // ==UserScript==
-// @name         QuestionHub Row Click Label Tracker & Restore
-// @namespace    amazon_ir_editor_row_label_restore
-// @version      2.0
-// @description  Records label + row click decisions per question. Manual restore via button.
+// @name         QuestionHub Row Label Tracker + Visual Feedback
+// @namespace    amazon_ir_editor_row_label_feedback
+// @version      2.2
+// @description  Tracks label + row decisions and visually marks them immediately. Restores only on button click.
 // @match        https://ir-editor.amazon.com/questionHub/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -13,7 +13,7 @@
 (function () {
   'use strict';
 
-  const STORAGE_KEY = 'qh_row_decision_map';
+  const STORAGE_KEY = 'qh_row_decision_map_v2';
   const RESTORE_BTN_ID = 'qh-restore-decisions-btn';
   const QUESTION_SELECTOR = 'h5';
   const LABEL_SELECTOR = 'td.cluster-question-item-data-label';
@@ -34,7 +34,7 @@
     GM_setValue(STORAGE_KEY, map);
   }
 
-  function recordDecision(asinId, label) {
+  function recordDecision(asinId, label, row) {
     const q = getCurrentQuestion();
     if (!q || !asinId) return;
 
@@ -49,7 +49,23 @@
     }
 
     saveMap(map);
+    visuallyMarkRow(row, label);
     console.log(`[Saved] ${asinId} → ${label} under: ${q}`);
+  }
+
+  function extractASINFromRow(row) {
+    const aTag = row.querySelector('a');
+    if (!aTag) return null;
+    const text = aTag.textContent.trim();
+    if (/^B0[A-Z0-9]{8}$/.test(text)) return text;
+    return null;
+  }
+
+  function visuallyMarkRow(row, label, color = 'dodgerblue') {
+    if (!row) return;
+    row.style.outline = `2px solid ${color}`;
+    row.dataset.markedLabel = label;
+    row.title = `Labeled: ${label}`;
   }
 
   function restoreForCurrentQuestion() {
@@ -61,20 +77,23 @@
     let restored = 0;
 
     decisions.forEach(({ asinId, label }) => {
-      // Simulate label click
+      // Set label
       const labelCell = [...document.querySelectorAll(LABEL_SELECTOR)]
         .find(td => td.textContent.trim() === label);
       if (!labelCell) return;
 
-      labelCell.click(); // Set label
+      labelCell.click();
       currentLabel = label;
 
-      // Find ASIN row to click
-      const row = [...document.querySelectorAll('tr')].find(tr =>
-        tr.innerHTML.includes(asinId));
+      // Click row
+      const row = [...document.querySelectorAll(ROW_SELECTOR)].find(tr => {
+        const rowAsin = extractASINFromRow(tr);
+        return rowAsin === asinId;
+      });
+
       if (row) {
         row.click();
-        row.style.outline = '2px solid limegreen';
+        visuallyMarkRow(row, label, 'limegreen');
         restored++;
       }
     });
@@ -120,17 +139,16 @@
       });
     });
 
-    // Row clicks (only rows with ASINs inside)
+    // Row clicks
     document.querySelectorAll(ROW_SELECTOR).forEach(row => {
       if (row.dataset.boundRow) return;
       row.dataset.boundRow = 'true';
 
       row.addEventListener('click', () => {
         if (!currentLabel) return;
-        const asinMatch = row.innerHTML.match(/B0[A-Z0-9]{8}/);
-        const asinId = asinMatch ? asinMatch[0] : null;
+        const asinId = extractASINFromRow(row);
         if (asinId) {
-          recordDecision(asinId, currentLabel);
+          recordDecision(asinId, currentLabel, row);
         }
       });
     });
